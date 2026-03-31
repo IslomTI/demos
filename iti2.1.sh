@@ -1,7 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (Бронебойная версия)
-# Фикс DNS (resolv.conf) и фикс OSPF (Unicast over GRE)
+# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (v9 - Бронебойный Netplan & Unicast OSPF)
 # ==============================================================================
 
 if [ "$EUID" -ne 0 ]; then
@@ -14,7 +13,6 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Глобальные переменные
 DOMAIN="au-team.irpo"
 ISP_HQ_IP="172.16.40.1"
 HQ_ISP_IP="172.16.40.2"
@@ -33,8 +31,10 @@ echo -e "${CYAN}=== Подготовка системы ===${NC}"
 rm -rf /var/lib/apt/lists/* /var/lib/dpkg/lock* /var/cache/apt/archives/lock
 dpkg --configure -a 2>/dev/null || true
 
-systemctl disable --now systemd-resolved 2>/dev/null || true
+# Снимаем защиту с resolv.conf, если она была
 chattr -i /etc/resolv.conf 2>/dev/null || true
+systemctl stop systemd-resolved 2>/dev/null || true
+systemctl disable systemd-resolved 2>/dev/null || true
 rm -f /etc/resolv.conf
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 
@@ -61,13 +61,12 @@ apply_netplan() {
     sleep 3
 }
 
-# ЖЕСТКИЙ ФИКС DNS ДЛЯ СЕРВЕРОВ И РОУТЕРОВ (Запрет на перезапись)
 force_dns() {
     chattr -i /etc/resolv.conf 2>/dev/null || true
     rm -f /etc/resolv.conf
     echo "nameserver $1" > /etc/resolv.conf
     echo "search $DOMAIN" >> /etc/resolv.conf
-    chattr +i /etc/resolv.conf
+    chattr +i /etc/resolv.conf 2>/dev/null || true
 }
 
 create_sshuser() {
@@ -181,10 +180,11 @@ EOF
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # ЖЕСТКИЙ ФИКС OSPF: UNICAST РЕЖИМ (Обходит баги VMware)
+    # ЖЕСТКИЙ ФИКС OSPF
+    ip route flush cache
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
-    sleep 2
+    sleep 3
     vtysh <<EOF
 conf t
 interface gre1
@@ -245,10 +245,11 @@ EOF
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # ЖЕСТКИЙ ФИКС OSPF: UNICAST РЕЖИМ
+    # ЖЕСТКИЙ ФИКС OSPF
+    ip route flush cache
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
-    sleep 2
+    sleep 3
     vtysh <<EOF
 conf t
 interface gre1
@@ -357,10 +358,7 @@ setup_hqcli() {
     show_interfaces
     read -p "Интерфейс: " INT_LAN
 
-    # ЖЕСТКИЙ ФИКС DHCP ДЛЯ КЛИЕНТА (Игнорируем DNS от VMware)
-    grep -q "supersede domain-name-servers" /etc/dhcp/dhclient.conf || echo "supersede domain-name-servers $HQ_SRV_IP;" >> /etc/dhcp/dhclient.conf
-    grep -q "supersede domain-search" /etc/dhcp/dhclient.conf || echo "supersede domain-search \"$DOMAIN\";" >> /etc/dhcp/dhclient.conf
-
+    # АБСОЛЮТНЫЙ ФИКС DNS В NETPLAN ДЛЯ КЛИЕНТА
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
 network:
@@ -368,15 +366,29 @@ network:
   ethernets:
     $INT_LAN: {optional: true, dhcp4: false}
   vlans:
-    vlan20: {id: 20, link: $INT_LAN, dhcp4: true}
+    vlan20:
+      id: 20
+      link: $INT_LAN
+      dhcp4: true
+      dhcp4-overrides:
+        use-dns: false
+      nameservers:
+        addresses: [$HQ_SRV_IP]
+        search: [$DOMAIN]
 EOF
+    
+    # Защита от всех системных служб
+    systemctl stop systemd-resolved 2>/dev/null || true
+    systemctl disable systemd-resolved 2>/dev/null || true
+    chattr -i /etc/resolv.conf 2>/dev/null || true
+    rm -f /etc/resolv.conf
+    echo "nameserver $HQ_SRV_IP" > /etc/resolv.conf
+    echo "search $DOMAIN" >> /etc/resolv.conf
+    chattr +i /etc/resolv.conf 2>/dev/null || true
+
     apply_netplan
 
-    # Перезапуск клиента DHCP для получения правильных настроек
-    dhclient -r 2>/dev/null || true
-    dhclient 2>/dev/null || true
-
-    echo -e "${GREEN}[УСПЕХ] HQ-CLI настроен (Получает IP и правильный DNS)!${NC}"
+    echo -e "${GREEN}[УСПЕХ] HQ-CLI настроен (Получает IP по DHCP, DNS зафиксирован жестко)!${NC}"
 }
 
 clear
