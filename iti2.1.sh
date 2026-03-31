@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (Строго по заданию)
-# Настройка инфраструктуры, VLAN, GRE, OSPF, DHCP, DNS, SSH
+# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (Бронебойная версия)
+# Фикс DNS (resolv.conf) и фикс OSPF (Unicast over GRE)
 # ==============================================================================
 
 if [ "$EUID" -ne 0 ]; then
@@ -14,7 +14,7 @@ CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Глобальные переменные из таблиц задания
+# Глобальные переменные
 DOMAIN="au-team.irpo"
 ISP_HQ_IP="172.16.40.1"
 HQ_ISP_IP="172.16.40.2"
@@ -30,19 +30,18 @@ GRE_HQ="10.0.0.1"
 GRE_BR="10.0.0.2"
 
 echo -e "${CYAN}=== Подготовка системы ===${NC}"
-# Очистка apt от зависаний
 rm -rf /var/lib/apt/lists/* /var/lib/dpkg/lock* /var/cache/apt/archives/lock
 dpkg --configure -a 2>/dev/null || true
 
-# Временный DNS для установки пакетов
 systemctl disable --now systemd-resolved 2>/dev/null || true
+chattr -i /etc/resolv.conf 2>/dev/null || true
 rm -f /etc/resolv.conf
 echo "nameserver 8.8.8.8" > /etc/resolv.conf
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y -q || true
 
-# --- ФУНКЦИИ (Задания 1, 3, 5, 11) ---
+# --- ОБЩИЕ ФУНКЦИИ ---
 
 set_hostname_and_time() {
     hostnamectl set-hostname "$1"
@@ -62,13 +61,15 @@ apply_netplan() {
     sleep 3
 }
 
+# ЖЕСТКИЙ ФИКС DNS ДЛЯ СЕРВЕРОВ И РОУТЕРОВ (Запрет на перезапись)
 force_dns() {
+    chattr -i /etc/resolv.conf 2>/dev/null || true
     rm -f /etc/resolv.conf
     echo "nameserver $1" > /etc/resolv.conf
     echo "search $DOMAIN" >> /etc/resolv.conf
+    chattr +i /etc/resolv.conf
 }
 
-# Задание 3 и 5 (Пользователь sshuser и защита SSH)
 create_sshuser() {
     id -u sshuser &>/dev/null || useradd -m -s /bin/bash -u 1015 sshuser
     echo "sshuser:P@ssw0rd" | chpasswd
@@ -85,10 +86,8 @@ create_sshuser() {
     systemctl restart ssh || systemctl restart sshd || true
 }
 
-# Задание 3 (Пользователь net_admin для роутеров)
 create_netadmin() {
     id -u net_admin &>/dev/null || useradd -m -s /bin/bash net_admin
-    # Экранируем двойной доллар P@$$w0rd для Bash
     echo "net_admin:P@\$\$w0rd" | chpasswd
     usermod -aG sudo net_admin
     echo "net_admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/net_admin
@@ -116,12 +115,10 @@ network:
 EOF
     apply_netplan
 
-    # Задание 2: NAT на ISP
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     sysctl -p
     iptables -t nat -A POSTROUTING -o $INT_EXT -j MASQUERADE
     
-    # Статические маршруты, чтобы ISP знал, куда возвращать интернет-пакеты
     ip route add 192.168.10.0/24 via $HQ_ISP_IP 2>/dev/null || true
     ip route add 192.168.20.0/24 via $HQ_ISP_IP 2>/dev/null || true
     ip route add 192.168.30.0/24 via $BR_ISP_IP 2>/dev/null || true
@@ -141,7 +138,6 @@ setup_hqrtr() {
 
     apt-get install -y -q isc-dhcp-server iptables-persistent frr
 
-    # Задание 4 (VLAN) и Задание 6 (GRE) - Сразу с MTU 1400 для OSPF!
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
 network:
@@ -161,13 +157,11 @@ network:
 EOF
     apply_netplan
 
-    # Отключаем защиту ядра (rp_filter), чтобы OSPF не блокировался
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     for f in /proc/sys/net/ipv4/conf/*/rp_filter; do echo 0 > $f; done
     sed -i 's/rp_filter=1/rp_filter=0/g' /etc/sysctl.conf
     sysctl -p
 
-    # Задание 9: DHCP Сервер для HQ-CLI
     sed -i "s/INTERFACESv4=.*/INTERFACESv4=\"vlan20\"/" /etc/default/isc-dhcp-server
     cat <<EOF > /etc/dhcp/dhcpd.conf
 authoritative;
@@ -180,31 +174,33 @@ subnet 192.168.20.0 netmask 255.255.255.224 {
 EOF
     systemctl restart isc-dhcp-server || true
 
-    # Задание 8: NAT для офиса
     iptables -t nat -A POSTROUTING -o $INT_ISP -j MASQUERADE
     iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    iptables -I INPUT -p ospf -j ACCEPT
+    iptables -I FORWARD -p ospf -j ACCEPT
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # Задание 7: OSPF (Строго только в туннеле, MD5 пароль)
+    # ЖЕСТКИЙ ФИКС OSPF: UNICAST РЕЖИМ (Обходит баги VMware)
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
     sleep 2
     vtysh <<EOF
 conf t
+interface gre1
+ ip ospf network non-broadcast
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 md5 P@ssw0rd
+exit
 router ospf
  ospf router-id 1.1.1.1
  network 10.0.0.0/30 area 0
  network 192.168.10.0/27 area 0
  network 192.168.20.0/27 area 0
  network 192.168.99.0/29 area 0
+ neighbor 10.0.0.2
  passive-interface default
  no passive-interface gre1
-exit
-interface gre1
- ip ospf network point-to-point
- ip ospf authentication message-digest
- ip ospf message-digest-key 1 md5 P@ssw0rd
 end
 write
 EOF
@@ -244,26 +240,29 @@ EOF
 
     iptables -t nat -A POSTROUTING -o $INT_ISP -j MASQUERADE
     iptables -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+    iptables -I INPUT -p ospf -j ACCEPT
+    iptables -I FORWARD -p ospf -j ACCEPT
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # Задание 7: OSPF 
+    # ЖЕСТКИЙ ФИКС OSPF: UNICAST РЕЖИМ
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
     sleep 2
     vtysh <<EOF
 conf t
+interface gre1
+ ip ospf network non-broadcast
+ ip ospf authentication message-digest
+ ip ospf message-digest-key 1 md5 P@ssw0rd
+exit
 router ospf
  ospf router-id 2.2.2.2
  network 10.0.0.0/30 area 0
  network 192.168.30.0/28 area 0
+ neighbor 10.0.0.1
  passive-interface default
  no passive-interface gre1
-exit
-interface gre1
- ip ospf network point-to-point
- ip ospf authentication message-digest
- ip ospf message-digest-key 1 md5 P@ssw0rd
 end
 write
 EOF
@@ -291,7 +290,6 @@ network:
 EOF
     apply_netplan
 
-    # Задание 10: DNS (Прямая и ДВЕ Обратные зоны по Таблице 2)
     cat <<EOF > /etc/bind/named.conf.options
 options { directory "/var/cache/bind"; forwarders { 8.8.8.8; }; dnssec-validation auto; listen-on-v6 { any; }; allow-query { any; }; };
 EOF
@@ -359,6 +357,10 @@ setup_hqcli() {
     show_interfaces
     read -p "Интерфейс: " INT_LAN
 
+    # ЖЕСТКИЙ ФИКС DHCP ДЛЯ КЛИЕНТА (Игнорируем DNS от VMware)
+    grep -q "supersede domain-name-servers" /etc/dhcp/dhclient.conf || echo "supersede domain-name-servers $HQ_SRV_IP;" >> /etc/dhcp/dhclient.conf
+    grep -q "supersede domain-search" /etc/dhcp/dhclient.conf || echo "supersede domain-search \"$DOMAIN\";" >> /etc/dhcp/dhclient.conf
+
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
 network:
@@ -370,12 +372,16 @@ network:
 EOF
     apply_netplan
 
-    echo -e "${GREEN}[УСПЕХ] HQ-CLI настроен (Получает IP по DHCP)!${NC}"
+    # Перезапуск клиента DHCP для получения правильных настроек
+    dhclient -r 2>/dev/null || true
+    dhclient 2>/dev/null || true
+
+    echo -e "${GREEN}[УСПЕХ] HQ-CLI настроен (Получает IP и правильный DNS)!${NC}"
 }
 
 clear
 echo -e "${YELLOW}=================================================${NC}"
-echo -e "${GREEN} ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (Релизная версия)${NC}"
+echo -e "${GREEN} ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (БРОНЕБОЙНЫЙ)${NC}"
 echo -e "${YELLOW}=================================================${NC}"
 echo "Выберите роль машины:"
 echo "1) ISP     (Провайдер)"
