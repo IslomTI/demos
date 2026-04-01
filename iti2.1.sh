@@ -1,6 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (v9 - Бронебойный Netplan & Unicast OSPF)
+# ДЕМОЭКЗАМЕН 2025 - МОДУЛЬ 1 (v10 - Умная маршрутизация загрузок)
+# Фикс APT (IPv4), Фикс OSPF (Unicast), Фикс DNS (dhcp4-overrides)
 # ==============================================================================
 
 if [ "$EUID" -ne 0 ]; then
@@ -28,18 +29,16 @@ GRE_HQ="10.0.0.1"
 GRE_BR="10.0.0.2"
 
 echo -e "${CYAN}=== Подготовка системы ===${NC}"
+# Жестко заставляем APT качать только по IPv4 (защита от зависаний)
+echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
+
 rm -rf /var/lib/apt/lists/* /var/lib/dpkg/lock* /var/cache/apt/archives/lock
 dpkg --configure -a 2>/dev/null || true
 
-# Снимаем защиту с resolv.conf, если она была
 chattr -i /etc/resolv.conf 2>/dev/null || true
 systemctl stop systemd-resolved 2>/dev/null || true
 systemctl disable systemd-resolved 2>/dev/null || true
-rm -f /etc/resolv.conf
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
-
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y -q || true
 
 # --- ОБЩИЕ ФУНКЦИИ ---
 
@@ -101,8 +100,6 @@ setup_isp() {
     read -p "Интерфейс к HQ-RTR: " INT_HQ
     read -p "Интерфейс к BR-RTR: " INT_BR
 
-    apt-get install -y -q iptables-persistent
-
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
 network:
@@ -114,10 +111,16 @@ network:
 EOF
     apply_netplan
 
+    # Настраиваем интернет и качаем пакеты
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    apt-get update -y -q
+    apt-get install -y -q iptables-persistent
+
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     sysctl -p
     iptables -t nat -A POSTROUTING -o $INT_EXT -j MASQUERADE
     
+    # Чтобы интернет работал в обратную сторону
     ip route add 192.168.10.0/24 via $HQ_ISP_IP 2>/dev/null || true
     ip route add 192.168.20.0/24 via $HQ_ISP_IP 2>/dev/null || true
     ip route add 192.168.30.0/24 via $BR_ISP_IP 2>/dev/null || true
@@ -130,12 +133,9 @@ EOF
 
 setup_hqrtr() {
     set_hostname_and_time "hq-rtr.$DOMAIN"
-    create_netadmin
     show_interfaces
     read -p "Интерфейс к ISP: " INT_ISP
     read -p "Интерфейс ВНУТРЬ (VLAN 10, 20, 99): " INT_LAN
-
-    apt-get install -y -q isc-dhcp-server iptables-persistent frr
 
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
@@ -156,9 +156,15 @@ network:
 EOF
     apply_netplan
 
+    # Теперь у HQ-RTR есть интернет через ISP! Качаем пакеты:
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    apt-get update -y -q
+    apt-get install -y -q isc-dhcp-server iptables-persistent frr
+
+    create_netadmin
+
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     for f in /proc/sys/net/ipv4/conf/*/rp_filter; do echo 0 > $f; done
-    sed -i 's/rp_filter=1/rp_filter=0/g' /etc/sysctl.conf
     sysctl -p
 
     sed -i "s/INTERFACESv4=.*/INTERFACESv4=\"vlan20\"/" /etc/default/isc-dhcp-server
@@ -180,7 +186,7 @@ EOF
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # ЖЕСТКИЙ ФИКС OSPF
+    # ЖЕСТКИЙ ФИКС OSPF (Unicast)
     ip route flush cache
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
@@ -211,12 +217,9 @@ EOF
 
 setup_brrtr() {
     set_hostname_and_time "br-rtr.$DOMAIN"
-    create_netadmin
     show_interfaces
     read -p "Интерфейс к ISP: " INT_ISP
     read -p "Интерфейс в LAN BR-SRV: " INT_LAN
-
-    apt-get install -y -q iptables-persistent frr
 
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
@@ -233,9 +236,15 @@ network:
 EOF
     apply_netplan
 
+    # У BR-RTR появился интернет через ISP. Качаем:
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    apt-get update -y -q
+    apt-get install -y -q iptables-persistent frr
+
+    create_netadmin
+
     echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
     for f in /proc/sys/net/ipv4/conf/*/rp_filter; do echo 0 > $f; done
-    sed -i 's/rp_filter=1/rp_filter=0/g' /etc/sysctl.conf
     sysctl -p
 
     iptables -t nat -A POSTROUTING -o $INT_ISP -j MASQUERADE
@@ -245,7 +254,7 @@ EOF
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4
 
-    # ЖЕСТКИЙ ФИКС OSPF
+    # ЖЕСТКИЙ ФИКС OSPF (Unicast)
     ip route flush cache
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
@@ -274,11 +283,8 @@ EOF
 
 setup_hqsrv() {
     set_hostname_and_time "hq-srv.$DOMAIN"
-    create_sshuser
     show_interfaces
     read -p "Интерфейс: " INT_LAN
-
-    apt-get install -y -q bind9 bind9utils
 
     rm -f /etc/netplan/*.yaml
     cat <<EOF > /etc/netplan/00-config.yaml
@@ -290,6 +296,12 @@ network:
     vlan10: {id: 10, link: $INT_LAN, addresses: [$HQ_SRV_IP/27], routes: [{to: default, via: $HQ_RTR_V10}]}
 EOF
     apply_netplan
+
+    # У сервера появился инет (через HQ-RTR -> ISP). Качаем:
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    apt-get update -y -q
+    apt-get install -y -q bind9 bind9utils
+    create_sshuser
 
     cat <<EOF > /etc/bind/named.conf.options
 options { directory "/var/cache/bind"; forwarders { 8.8.8.8; }; dnssec-validation auto; listen-on-v6 { any; }; allow-query { any; }; };
@@ -336,7 +348,6 @@ EOF
 
 setup_brsrv() {
     set_hostname_and_time "br-srv.$DOMAIN"
-    create_sshuser
     show_interfaces
     read -p "Интерфейс: " INT_LAN
 
@@ -348,6 +359,11 @@ network:
     $INT_LAN: {optional: true, addresses: [$BR_SRV_IP/28], routes: [{to: default, via: $BR_RTR_LAN}]}
 EOF
     apply_netplan
+
+    # У сервера появился инет (через BR-RTR -> ISP). Качаем:
+    echo "nameserver 8.8.8.8" > /etc/resolv.conf
+    apt-get update -y -q
+    create_sshuser
 
     force_dns "$HQ_SRV_IP"
     echo -e "${GREEN}[УСПЕХ] BR-SRV настроен (Базовая сеть + SSH)!${NC}"
@@ -377,9 +393,6 @@ network:
         search: [$DOMAIN]
 EOF
     
-    # Защита от всех системных служб
-    systemctl stop systemd-resolved 2>/dev/null || true
-    systemctl disable systemd-resolved 2>/dev/null || true
     chattr -i /etc/resolv.conf 2>/dev/null || true
     rm -f /etc/resolv.conf
     echo "nameserver $HQ_SRV_IP" > /etc/resolv.conf
