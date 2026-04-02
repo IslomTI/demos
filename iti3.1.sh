@@ -87,7 +87,7 @@ create_sshuser() {
 create_netadmin() {
     id -u net_admin &>/dev/null || useradd -m -s /bin/bash net_admin
     # ИСПРАВЛЕНО: P@$$word (было 0 вместо o)
-    echo "net_admin:P@\$\$word" | chpasswd
+    echo "net_admin:P@\$\$w0rd" | chpasswd
     usermod -aG sudo net_admin
     echo "net_admin ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/net_admin
 }
