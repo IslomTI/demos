@@ -11,7 +11,7 @@
 **Инфраструктурных сервисов:** DNS (Bind9), NTP (Chrony), SSH.
 **Прикладных сервисов:** Nginx Reverse Proxy, аппаратный RAID0, NFS (AutoFS), Samba AD DC, Docker (MediaWiki), Apache (Moodle).
 
-🔗 **Скрипт:** [`5.sh`](https://github.com/IslomTI/demos/blob/main/5.sh)
+🔗 **Скрипт:** [`iti5.sh`](https://github.com/IslomTI/demos/blob/main/iti5.sh)
 
 ---
 
@@ -61,8 +61,8 @@
 ### Шаг 1. Скачивание скрипта
 Включите все машины. Убедитесь, что интернет работает (через первый `NAT` адаптер). Зайдите на каждую ВМ под пользователем `root` (`sudo su`) и выполните:
 ```bash
-wget [https://raw.githubusercontent.com/IslomTI/demos/main/5.sh](https://raw.githubusercontent.com/IslomTI/demos/main/5.sh)
-chmod +x 5.sh
+wget [https://raw.githubusercontent.com/IslomTI/demos/main/iti5.sh](https://raw.githubusercontent.com/IslomTI/demos/main/iti5.sh)
+chmod +x iti5.sh
 
 ```
 
@@ -75,7 +75,7 @@ chmod +x 5.sh
 
 ### Шаг 3. Запуск по цепочке
 
-Запускайте `./5.sh` строго в указанном порядке. Скрипт попросит ввести имена интерфейсов (например, `ens33`).
+Запускайте `./iti5.sh` строго в указанном порядке. Скрипт попросит ввести имена интерфейсов (например, `ens33`).
 
 1. Сначала: **ISP** (В меню скрипта выберите пункт `1`).
 2. Затем роутеры: **HQ-RTR** (пункт `2`) и **BR-RTR** (пункт `3`).
