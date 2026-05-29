@@ -2,9 +2,9 @@
 setlocal enabledelayedexpansion
 
 REM ======================================================================
-REM Environment: Universal AI Router (Hybrid Mode)
-REM Engineering Initiative: Strict ASCII/English to prevent byte-shifting.
-REM Native module execution via python -m.
+REM Environment: Universal AI Router (Context-Aware Execution)
+REM Engineering Initiative: Strict ASCII. Bypassing Windows Store aliases.
+REM Context-dependent command construction for Portable vs Host modes.
 REM ======================================================================
 
 set "VPS_IP=77.110.117.63"
@@ -24,11 +24,14 @@ REM STAGE 1: Hybrid PATH Resolution
 REM ==========================================
 set "PORTABLE_WPY=%~dp0AiderEnv\WPy64-31180"
 set "PORTABLE_GIT=%~dp0AiderEnv\PortableGit"
+set "IS_PORTABLE=0"
 
 if exist "!PORTABLE_WPY!" (
+    set "IS_PORTABLE=1"
     echo [%DATE% %TIME%] [INFO] Portable environment detected. Connecting...
     for /d %%I in ("!PORTABLE_WPY!\python*") do (
         if exist "%%I\python.exe" (
+            set "PYTHON_DIR=%%I"
             set "PATH=%%I;%%I\Scripts;!PATH!"
         )
     )
@@ -73,12 +76,20 @@ if "!AGENT_INPUT!"=="2" if "!HAS_AIDER!"=="1" goto :set_aider
 goto :agent_menu_loop
 
 :set_cecli
-set "AGENT_CMD=python -m cecli"
+if "!IS_PORTABLE!"=="1" (
+    set "AGENT_CMD=!PYTHON_DIR!\python.exe -m cecli"
+) else (
+    set "AGENT_CMD=cecli"
+)
 set "AGENT_NAME=CECLI-DEV"
 goto :fetch_models
 
 :set_aider
-set "AGENT_CMD=python -m aider"
+if "!IS_PORTABLE!"=="1" (
+    set "AGENT_CMD=!PYTHON_DIR!\python.exe -m aider"
+) else (
+    set "AGENT_CMD=aider"
+)
 set "AGENT_NAME=Aider"
 goto :fetch_models
 
