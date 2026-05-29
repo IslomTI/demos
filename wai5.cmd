@@ -3,8 +3,8 @@ setlocal enabledelayedexpansion
 
 REM ======================================================================
 REM Environment: Universal AI Router (Strict Flat Architecture)
-REM Engineering Initiative: Full separation of Executable and Arguments
-REM to prevent Error 9009 caused by token evaluation bugs in cmd.exe.
+REM Engineering Initiative: Hardcoded execution lines to bypass cmd.exe 
+REM Delayed Expansion tokenization bugs (Error 9009).
 REM ======================================================================
 
 set "VPS_IP=77.110.117.63"
@@ -79,26 +79,10 @@ if "!AGENT_INPUT!"=="2" if "!HAS_AIDER!"=="1" goto :set_aider
 goto :agent_menu_loop
 
 :set_cecli
-if "!IS_PORTABLE!"=="1" goto :set_cecli_portable
-set "RUN_EXE=cecli"
-set "RUN_ARGS="
-goto :set_cecli_common
-:set_cecli_portable
-set "RUN_EXE=!PYTHON_DIR!\python.exe"
-set "RUN_ARGS=-m cecli"
-:set_cecli_common
 set "AGENT_NAME=CECLI-DEV"
 goto :fetch_models
 
 :set_aider
-if "!IS_PORTABLE!"=="1" goto :set_aider_portable
-set "RUN_EXE=aider"
-set "RUN_ARGS="
-goto :set_aider_common
-:set_aider_portable
-set "RUN_EXE=!PYTHON_DIR!\python.exe"
-set "RUN_ARGS=-m aider"
-:set_aider_common
 set "AGENT_NAME=Aider"
 goto :fetch_models
 
@@ -170,18 +154,18 @@ goto :run_aider_agent
 
 :run_cecli_agent
 if "!IS_PORTABLE!"=="1" goto :run_cecli_portable
-!RUN_EXE! --model "openai/!CHOSEN_MODEL!"
+cecli --model "openai/!CHOSEN_MODEL!"
 goto :end_agent
 :run_cecli_portable
-"!RUN_EXE!" !RUN_ARGS! --model "openai/!CHOSEN_MODEL!"
+"!PYTHON_DIR!\python.exe" -m cecli --model "openai/!CHOSEN_MODEL!"
 goto :end_agent
 
 :run_aider_agent
 if "!IS_PORTABLE!"=="1" goto :run_aider_portable
-!RUN_EXE! --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
 goto :end_agent
 :run_aider_portable
-"!RUN_EXE!" !RUN_ARGS! --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+"!PYTHON_DIR!\python.exe" -m aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
 goto :end_agent
 
 :end_agent
