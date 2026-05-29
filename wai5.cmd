@@ -1,34 +1,32 @@
 @echo off
-chcp 65001 >nul
 setlocal enabledelayedexpansion
 
-:: ======================================================================
-:: Декларация среды: Universal AI Router (Hybrid Mode)
-:: Инженерная инициатива: Прямой вызов модулей (python -m) для обхода 
-:: жестко зашитых путей в pip-обертках. Принудительное удержание окна.
-:: ======================================================================
+REM ======================================================================
+REM Environment: Universal AI Router (Hybrid Mode)
+REM Engineering Initiative: Strict ASCII/English to prevent byte-shifting.
+REM Native module execution via python -m.
+REM ======================================================================
 
-set "VPS_IP=77.1107.63"
+set "VPS_IP=77.110.117.63"
 set "PROXY_PORT=20128"
 set "API_BASE_URL=http://!VPS_IP!:%PROXY_PORT%/v1"
-set "API_KEY=sk-51efcc9f4212b043-3-6a986a69"
+set "API_KEY=sk-51efcc9f4212b043-3ed376-6a986a69"
 
 set "RAND_ID=%RANDOM%"
 set "TMP_ANTHROPIC=%TEMP%\usb_anth_!RAND_ID!.json"
 set "TMP_OPENAI=%TEMP%\usb_oai_!RAND_ID!.json"
 set "TMP_TXT=%TEMP%\usb_list_!RAND_ID!.txt"
 
-echo [%DATE% %TIME%] [INFO] Инициализация среды маршрутизации...
+echo [%DATE% %TIME%] [INFO] Initializing routing environment...
 
-:: ==========================================
-:: ЭТАП 1: Гибридная настройка путей (PATH)
-:: ==========================================
-:: Переменная %~dp0 динамически подстраивается под текущую букву диска (I:, G: и т.д.)
+REM ==========================================
+REM STAGE 1: Hybrid PATH Resolution
+REM ==========================================
 set "PORTABLE_WPY=%~dp0AiderEnv\WPy64-31180"
 set "PORTABLE_GIT=%~dp0AiderEnv\PortableGit"
 
 if exist "!PORTABLE_WPY!" (
-    echo [%DATE% %TIME%] [INFO] Обнаружена портативная среда. Подключение...
+    echo [%DATE% %TIME%] [INFO] Portable environment detected. Connecting...
     for /d %%I in ("!PORTABLE_WPY!\python*") do (
         if exist "%%I\python.exe" (
             set "PATH=%%I;%%I\Scripts;!PATH!"
@@ -38,12 +36,12 @@ if exist "!PORTABLE_WPY!" (
         set "PATH=!PORTABLE_GIT!\cmd;!PATH!"
     )
 ) else (
-    echo [%DATE% %TIME%] [INFO] Портативная среда не найдена. Режим системного хоста.
+    echo [%DATE% %TIME%] [INFO] Portable env NOT found. Using Host OS mode.
 )
 
-:: ==========================================
-:: ЭТАП 2: Поиск агентов в текущем PATH
-:: ==========================================
+REM ==========================================
+REM STAGE 2: Agent Discovery
+REM ==========================================
 set "HAS_CECLI=0"
 set "HAS_AIDER=0"
 
@@ -55,42 +53,40 @@ if !ERRORLEVEL! equ 0 set "HAS_AIDER=1"
 
 if "!HAS_CECLI!"=="0" if "!HAS_AIDER!"=="0" goto :err_agent
 
-:: ==========================================
-:: ЭТАП 3: Меню выбора инструмента
-:: ==========================================
+REM ==========================================
+REM STAGE 3: Agent Menu
+REM ==========================================
 :agent_menu_loop
 cls
 echo ======================================================================
-echo    UNIVERSAL AI ROUTER - ВЫБОР ИНСТРУМЕНТА
+echo    UNIVERSAL AI ROUTER - SELECT TOOL
 echo ======================================================================
-if "!HAS_CECLI!"=="1" echo  [1] CECLI-DEV (Обнаружен в системе)
-if "!HAS_AIDER!"=="1" echo  [2] Aider (Обнаружен в системе)
+if "!HAS_CECLI!"=="1" echo  [1] CECLI-DEV (Detected)
+if "!HAS_AIDER!"=="1" echo  [2] Aider (Detected)
 echo ======================================================================
 echo.
 set "AGENT_INPUT="
-set /p "AGENT_INPUT=Выберите агента: "
+set /p "AGENT_INPUT=Select agent [1-2]: "
 
 if "!AGENT_INPUT!"=="1" if "!HAS_CECLI!"=="1" goto :set_cecli
 if "!AGENT_INPUT!"=="2" if "!HAS_AIDER!"=="1" goto :set_aider
 goto :agent_menu_loop
 
 :set_cecli
-:: Используем модульный запуск, чтобы обойти сломанные .exe обертки
 set "AGENT_CMD=python -m cecli"
 set "AGENT_NAME=CECLI-DEV"
 goto :fetch_models
 
 :set_aider
-:: Используем модульный запуск, чтобы обойти сломанные .exe обертки
 set "AGENT_CMD=python -m aider"
 set "AGENT_NAME=Aider"
 goto :fetch_models
 
-:: ==========================================
-:: ЭТАП 4: Опрос OmniRoute
-:: ==========================================
+REM ==========================================
+REM STAGE 4: OmniRoute Fetch
+REM ==========================================
 :fetch_models
-echo [%DATE% %TIME%] [INFO] Опрос агрегатора OmniRoute...
+echo [%DATE% %TIME%] [INFO] Polling OmniRoute aggregator...
 curl.exe -s -X GET "!API_BASE_URL!/models" -H "x-api-key: !API_KEY!" -H "anthropic-version: 2023-06-01" > "!TMP_ANTHROPIC!"
 curl.exe -s -X GET "!API_BASE_URL!/models" -H "Authorization: Bearer !API_KEY!" > "!TMP_OPENAI!"
 
@@ -108,13 +104,13 @@ for /f "usebackq tokens=*" %%i in ("!TMP_TXT!") do (
 
 if "!MODEL_COUNT!"=="0" goto :err_no_models
 
-:: ==========================================
-:: ЭТАП 5: Меню выбора модели
-:: ==========================================
+REM ==========================================
+REM STAGE 5: Model Menu
+REM ==========================================
 :model_menu_loop
 cls
 echo ======================================================================
-echo    OMNIROUTE (!AGENT_NAME!) - ВЫБОР МОДЕЛИ (НАЙДЕНО: !MODEL_COUNT!)
+echo    OMNIROUTE (!AGENT_NAME!) - SELECT MODEL (FOUND: !MODEL_COUNT!)
 echo ======================================================================
 for /l %%x in (1, 1, !MODEL_COUNT!) do (
     echo  [%%x] !MODEL_ID_%%x!
@@ -122,7 +118,7 @@ for /l %%x in (1, 1, !MODEL_COUNT!) do (
 echo ======================================================================
 echo.
 set "USER_INPUT="
-set /p "USER_INPUT=Выберите ИИ-модель [1-!MODEL_COUNT!] (По умолчанию [1]): "
+set /p "USER_INPUT=Select ID [1-!MODEL_COUNT!] (Default [1]): "
 
 if "!USER_INPUT!"=="" set "USER_INPUT=1"
 
@@ -135,18 +131,18 @@ for /l %%x in (1, 1, !MODEL_COUNT!) do (
 )
 
 if "!VALID_INPUT!"=="0" goto :model_menu_loop
-echo [%DATE% %TIME%] [INFO] Выбран шлюз: !CHOSEN_MODEL!
+echo [%DATE% %TIME%] [INFO] Selected route: !CHOSEN_MODEL!
 
-:: ==========================================
-:: ЭТАП 6: Изоляция переменных среды и Запуск
-:: ==========================================
+REM ==========================================
+REM STAGE 6: Environment Isolation and Launch
+REM ==========================================
 set "OPENAI_API_BASE=!API_BASE_URL!"
 set "OPENAI_API_KEY=!API_KEY!"
 set "ANTHROPIC_API_KEY="
 set "ANTHROPIC_BASE_URL="
 
-echo [%DATE% %TIME%] [SUCCESS] Маршруты настроены. Передача управления агенту.
-echo Нажмите Ctrl+C для безопасного прерывания.
+echo [%DATE% %TIME%] [SUCCESS] Routes configured. Handing over to agent.
+echo Press Ctrl+C for safe interrupt (SIGINT).
 echo ----------------------------------------------------------------------
 
 if "!AGENT_NAME!"=="CECLI-DEV" goto :run_cecli_agent
@@ -164,38 +160,33 @@ goto :end_agent
 set "EXIT_CODE=%ERRORLEVEL%"
 echo ----------------------------------------------------------------------
 if !EXIT_CODE! neq 0 (
-    echo [%DATE% %TIME%] [CRITICAL] Процесс завершился с кодом ошибки: !EXIT_CODE!
+    echo [%DATE% %TIME%] [CRITICAL] Process exited with error code: !EXIT_CODE!
 )
 goto :final_exit
 
-:: ======================================================================
-:: Обработчики ошибок
-:: ======================================================================
+REM ======================================================================
+REM Error Handlers
+REM ======================================================================
 :err_agent
-echo [%DATE% %TIME%] [CRITICAL] Агенты не найдены ни в портативной среде, ни в системе.
-echo Для работы в глобальном режиме установите агента через Python:
-echo   pip install aider-chat
-echo   или
-echo   pip install cecli-dev
+echo [%DATE% %TIME%] [CRITICAL] No agents found in portable env or system PATH.
+echo Please run: pip install aider-chat
 goto :error_exit
 
 :err_no_models
-echo [%DATE% %TIME%] [CRITICAL] Пустой список моделей от OmniRoute.
+echo [%DATE% %TIME%] [CRITICAL] Empty model list returned from OmniRoute.
 goto :error_exit
 
 :error_exit
 set "EXIT_CODE=1"
-:: Специальная пауза для ошибок ДО завершения среды
 pause
 
 :final_exit
-echo [%DATE% %TIME%] [INFO] Очистка временных файлов...
+echo [%DATE% %TIME%] [INFO] Cleaning up temporary files...
 if exist "!TMP_ANTHROPIC!" del /Q "!TMP_ANTHROPIC!"
 if exist "!TMP_OPENAI!" del /Q "!TMP_OPENAI!"
 if exist "!TMP_TXT!" del /Q "!TMP_TXT!"
 
-echo [%DATE% %TIME%] [INFO] Сессия полностью завершена.
-:: ГАРАНТИРОВАННАЯ ПАУЗА. Окно больше не закроется само по себе.
+echo [%DATE% %TIME%] [INFO] Session terminated safely.
 pause
 endlocal
 exit /b %EXIT_CODE%
