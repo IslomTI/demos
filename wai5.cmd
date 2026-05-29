@@ -3,8 +3,8 @@ setlocal enabledelayedexpansion
 
 REM ======================================================================
 REM Environment: Universal AI Router (Strict Flat Architecture)
-REM Engineering Initiative: Hardcoded execution lines to bypass cmd.exe 
-REM Delayed Expansion tokenization bugs (Error 9009).
+REM Engineering Initiative: Hardcoded execution lines with --yes flag 
+REM to automate Aider initialization and bypass interactive prompts.
 REM ======================================================================
 
 set "VPS_IP=77.110.117.63"
@@ -162,10 +162,10 @@ goto :end_agent
 
 :run_aider_agent
 if "!IS_PORTABLE!"=="1" goto :run_aider_portable
-aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings --yes
 goto :end_agent
 :run_aider_portable
-"!PYTHON_DIR!\python.exe" -m aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+"!PYTHON_DIR!\python.exe" -m aider --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings --yes
 goto :end_agent
 
 :end_agent
