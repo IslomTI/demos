@@ -10,8 +10,8 @@
 Архитектура разделена на два независимых скрипта (Модуль 1 — Сеть, Модуль 2 — Сервисы), чтобы сбой при скачивании тяжелых пакетов не затронул фундаментальную маршрутизацию и гарантировал сохранение баллов за сетевую топологию.
 
 🔗 **Репозиторий содержит:**
-* `module1_net.sh` — Базовая сеть, Виртуальный коммутатор (Bridge), GRE-туннели, OSPF, DHCP, NAT, DNS (Bind9).
-* `module2_services.sh` — Nginx Reverse Proxy, RAID0 (Mdadm), NFS + AutoFS, Samba AD DC, Docker (MediaWiki), Apache (Moodle).
+* `iti6.1.sh` — Базовая сеть, Виртуальный коммутатор (Bridge), GRE-туннели, OSPF, DHCP, NAT, DNS (Bind9).
+* `iti6.2.sh` — Nginx Reverse Proxy, RAID0 (Mdadm), NFS + AutoFS, Samba AD DC, Docker (MediaWiki), Apache (Moodle).
 
 ---
 
@@ -61,9 +61,9 @@
 ### Шаг 1. Скачивание скриптов
 Включите все машины. Убедитесь, что интернет работает (через первый `NAT` адаптер). Зайдите на каждую ВМ под пользователем `root` (`sudo su`) и выполните:
 ```bash
-wget [https://raw.githubusercontent.com/IslomTI/demos/main/module1_net.sh](https://raw.githubusercontent.com/IslomTI/demos/main/module1_net.sh)
-wget [https://raw.githubusercontent.com/IslomTI/demos/main/module2_services.sh](https://raw.githubusercontent.com/IslomTI/demos/main/module2_services.sh)
-chmod +x module1_net.sh module2_services.sh
+wget [https://raw.githubusercontent.com/IslomTI/demos/main/iti6.1.sh](https://raw.githubusercontent.com/IslomTI/demos/main/iti6.1.sh)
+wget [https://raw.githubusercontent.com/IslomTI/demos/main/iti6.2.sh](https://raw.githubusercontent.com/IslomTI/demos/main/iti6.2.sh)
+chmod +x iti6.1.sh iti6.2.sh
 
 ```
 
@@ -78,7 +78,7 @@ chmod +x module1_net.sh module2_services.sh
 
 **Проход 1 (Заливаем фундамент — Модуль 1):**
 
-1. Сначала: **ISP** (`./module1_net.sh` ➔ пункт `1`).
+1. Сначала: **ISP** (`./iti6.1.sh` ➔ пункт `1`).
 2. Затем роутеры: **HQ-RTR** (пункт `2`) и **BR-RTR** (пункт `3`).
 3. Затем серверы: **HQ-SRV** (пункт `4`) и **BR-SRV** (пункт `5`).
 4. Клиент: **HQ-CLI** (пункт `6`).
@@ -86,9 +86,9 @@ chmod +x module1_net.sh module2_services.sh
 
 **Проход 2 (Поднимаем сервисы — Модуль 2):**
 
-1. **HQ-SRV** (`./module2_services.sh` ➔ пункт `4` — RAID0, NFS, MariaDB, Moodle).
-2. **BR-SRV** (`./module2_services.sh` ➔ пункт `5` — Samba AD, Docker, MediaWiki).
-3. **HQ-CLI** (`./module2_services.sh` ➔ пункт `6` — Ввод в домен, AutoFS).
+1. **HQ-SRV** (`./iti6.2.sh` ➔ пункт `4` — RAID0, NFS, MariaDB, Moodle).
+2. **BR-SRV** (`./iti6.2.sh` ➔ пункт `5` — Samba AD, Docker, MediaWiki).
+3. **HQ-CLI** (`./iti6.2.sh` ➔ пункт `6` — Ввод в домен, AutoFS).
 
 * *После настройки клиента обязательно выполните команду `reboot`, чтобы применились групповые политики домена.*
 
