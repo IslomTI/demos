@@ -2,9 +2,9 @@
 setlocal enabledelayedexpansion
 
 REM ======================================================================
-REM Environment: Universal AI Router (Context-Aware Execution)
-REM Engineering Initiative: Strict ASCII. Bypassing Windows Store aliases.
-REM Context-dependent command construction for Portable vs Host modes.
+REM Environment: Universal AI Router (Strict Flat Architecture)
+REM Engineering Initiative: Full separation of Executable and Arguments
+REM to prevent Error 9009 caused by token evaluation bugs in cmd.exe.
 REM ======================================================================
 
 set "VPS_IP=77.110.117.63"
@@ -26,25 +26,28 @@ set "PORTABLE_WPY=%~dp0AiderEnv\WPy64-31180"
 set "PORTABLE_GIT=%~dp0AiderEnv\PortableGit"
 set "IS_PORTABLE=0"
 
-if exist "!PORTABLE_WPY!" (
-    set "IS_PORTABLE=1"
-    echo [%DATE% %TIME%] [INFO] Portable environment detected. Connecting...
-    for /d %%I in ("!PORTABLE_WPY!\python*") do (
-        if exist "%%I\python.exe" (
-            set "PYTHON_DIR=%%I"
-            set "PATH=%%I;%%I\Scripts;!PATH!"
-        )
+if not exist "!PORTABLE_WPY!" goto :host_mode_init
+
+set "IS_PORTABLE=1"
+echo [%DATE% %TIME%] [INFO] Portable environment detected. Connecting...
+for /d %%I in ("!PORTABLE_WPY!\python*") do (
+    if exist "%%I\python.exe" (
+        set "PYTHON_DIR=%%I"
+        set "PATH=%%I;%%I\Scripts;!PATH!"
     )
-    if exist "!PORTABLE_GIT!\cmd\git.exe" (
-        set "PATH=!PORTABLE_GIT!\cmd;!PATH!"
-    )
-) else (
-    echo [%DATE% %TIME%] [INFO] Portable env NOT found. Using Host OS mode.
 )
+if exist "!PORTABLE_GIT!\cmd\git.exe" (
+    set "PATH=!PORTABLE_GIT!\cmd;!PATH!"
+)
+goto :agent_discovery
+
+:host_mode_init
+echo [%DATE% %TIME%] [INFO] Portable env NOT found. Using Host OS mode.
 
 REM ==========================================
 REM STAGE 2: Agent Discovery
 REM ==========================================
+:agent_discovery
 set "HAS_CECLI=0"
 set "HAS_AIDER=0"
 
@@ -76,20 +79,26 @@ if "!AGENT_INPUT!"=="2" if "!HAS_AIDER!"=="1" goto :set_aider
 goto :agent_menu_loop
 
 :set_cecli
-if "!IS_PORTABLE!"=="1" (
-    set "AGENT_CMD=!PYTHON_DIR!\python.exe -m cecli"
-) else (
-    set "AGENT_CMD=cecli"
-)
+if "!IS_PORTABLE!"=="1" goto :set_cecli_portable
+set "RUN_EXE=cecli"
+set "RUN_ARGS="
+goto :set_cecli_common
+:set_cecli_portable
+set "RUN_EXE=!PYTHON_DIR!\python.exe"
+set "RUN_ARGS=-m cecli"
+:set_cecli_common
 set "AGENT_NAME=CECLI-DEV"
 goto :fetch_models
 
 :set_aider
-if "!IS_PORTABLE!"=="1" (
-    set "AGENT_CMD=!PYTHON_DIR!\python.exe -m aider"
-) else (
-    set "AGENT_CMD=aider"
-)
+if "!IS_PORTABLE!"=="1" goto :set_aider_portable
+set "RUN_EXE=aider"
+set "RUN_ARGS="
+goto :set_aider_common
+:set_aider_portable
+set "RUN_EXE=!PYTHON_DIR!\python.exe"
+set "RUN_ARGS=-m aider"
+:set_aider_common
 set "AGENT_NAME=Aider"
 goto :fetch_models
 
@@ -160,11 +169,19 @@ if "!AGENT_NAME!"=="CECLI-DEV" goto :run_cecli_agent
 goto :run_aider_agent
 
 :run_cecli_agent
-!AGENT_CMD! --model "openai/!CHOSEN_MODEL!"
+if "!IS_PORTABLE!"=="1" goto :run_cecli_portable
+!RUN_EXE! --model "openai/!CHOSEN_MODEL!"
+goto :end_agent
+:run_cecli_portable
+"!RUN_EXE!" !RUN_ARGS! --model "openai/!CHOSEN_MODEL!"
 goto :end_agent
 
 :run_aider_agent
-!AGENT_CMD! --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+if "!IS_PORTABLE!"=="1" goto :run_aider_portable
+!RUN_EXE! --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
+goto :end_agent
+:run_aider_portable
+"!RUN_EXE!" !RUN_ARGS! --model "openai/!CHOSEN_MODEL!" --no-show-model-warnings
 goto :end_agent
 
 :end_agent
