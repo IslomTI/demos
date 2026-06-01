@@ -23,25 +23,25 @@
 ## 🌐 ЭТАП 2: Подключение проводов (LAN Segments)
 Мы не используем VMnet. Мы используем LAN Segments — это изолированные виртуальные провода.
 В настройках любой виртуалки перейди в Network Adapter ➔ LAN Segments... ➔ Add и создай 6 сегментов:
-ISP-HQ, ISP-BR, HQ-TRUNK, HQ-LAN-SRV, HQ-LAN-CLI, BR-LAN.
+ISP-HQ, ISP-BR, HQ-Net, SRV-Net, CLI-Net, BR-Net.
 Теперь добавь адаптеры машинам строго по этой таблице (лишние удали кнопкой Remove, недостающие добавь кнопкой Add -> Network Adapter):
 | Имя машины | Адаптер 1 (Интернет) | Адаптер 2 (LAN Segment) | Адаптер 3 (LAN Segment) | Адаптер 4 (LAN Segment) |
 |---|---|---|---|---|
 | 🌍 **ISP** | NAT | ISP-HQ | ISP-BR | - |
 | 🖧 **HQ-RTR** | NAT | ISP-HQ | HQ-TRUNK | - |
-| 🖧 **HQ-SW** | NAT | HQ-TRUNK | HQ-LAN-SRV | HQ-LAN-CLI |
-| 🖧 **BR-RTR** | NAT | ISP-BR | BR-LAN | - |
-| 🖥️ **HQ-SRV** | NAT | HQ-LAN-SRV | - | - |
-| 🖥️ **BR-SRV** | NAT | BR-LAN | - | - |
-| 💻 **HQ-CLI** | NAT | HQ-LAN-CLI | - | - |
+| 🖧 **HQ-SW** | NAT | HQ-Net | SRV-Net | CLI-Net |
+| 🖧 **BR-RTR** | NAT | ISP-BR | BR-Net | - |
+| 🖥️ **HQ-SRV** | NAT | SRV-Net | - | - |
+| 🖥️ **BR-SRV** | NAT | BR-Net | - | - |
+| 💻 **HQ-CLI** | NAT | CLI-Net | - | - |
 ## 🚀 ЭТАП 3: Инструкция по запуску
 ### Шаг 1. Скачивание скриптов (Пока есть интернет)
 Запусти все машины. Авторизуйся везде (на серверах введи sudo su, чтобы стать root).
 На машинах с серверами пишем:
 ```bash
 apt update && apt install git -y
-git clone https://github.com/ТВОЙ_ЛОГИН/ТВОЙ_РЕПОЗИТОРИЙ.git
-cd ТВОЙ_РЕПОЗИТОРИЙ
+git clone https://github.com/islomti/demos
+cd demos
 chmod +x iti1.sh iti2.sh
 
 ```
@@ -49,8 +49,8 @@ chmod +x iti1.sh iti2.sh
 ```bash
 sudo su
 apt update && apt install git -y
-git clone https://github.com/ТВОЙ_ЛОГИН/ТВОЙ_РЕПОЗИТОРИЙ.git
-cd ТВОЙ_РЕПОЗИТОРИЙ
+git clone https://github.com/IslomTI/demos
+cd demos
 chmod +x iti1.sh iti2.sh
 
 ```
@@ -143,3 +143,10 @@ df -h | grep nfs
 Открой установленный Яндекс Браузер и введи:
  1. http://web.au-team.irpo ➔ Попросит пароль. Введи Kozmac / P@ssw0rd. Откроется сайт на Apache из HQ-SRV.
  2. http://docker.au-team.irpo ➔ Откроется заглушка сайта из Docker-контейнера на BR-SRV.
+
+
+# Под конец: выполняем везде:
+```bash
+sudo rm -rf demos/
+```
+# Eсли кто-то так не сделать, лично урою!
