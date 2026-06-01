@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # ДЕМОЭКЗАМЕН 2026 (ВАРИАНТ 2) — МОДУЛЬ 1 (БАЗОВАЯ ИНФРАСТРУКТУРА)
-# Особенности: Router-on-a-Stick, Systemd HQ-SW, OSPF Anti-Spoofing, FRR Polling
+# Особенности: Router-on-a-Stick, HQ-SW (Systemd VLAN Filter), FRR Polling
 # ==============================================================================
 
 trap cleanup SIGINT SIGTERM
@@ -9,7 +9,7 @@ trap cleanup SIGINT SIGTERM
 cleanup() {
     echo -e "\n\033[0;31m[ВНИМАНИЕ] Получен сигнал прерывания (SIGINT/SIGTERM).\033[0m"
     chattr -i /etc/resolv.conf 2>/dev/null || true
-    echo -e "\033[0;31m[ФАТАЛЬНО] Остановка выполнения. DPKG блокировки защищены.\033[0m"
+    echo -e "\033[0;31m[ФАТАЛЬНО] Остановка выполнения. DPKG блокировки НЕ снимаются принудительно для защиты базы пакетов.\033[0m"
     kill -TERM -$$ 2>/dev/null
     exit 1
 }
@@ -69,6 +69,7 @@ prepare_apt() {
     systemctl stop unattended-upgrades 2>/dev/null || true
     systemctl disable unattended-upgrades 2>/dev/null || true
     
+    log_info "Жесткое отключение периодических обновлений APT..."
     echo 'APT::Periodic::Enable "0";' > /etc/apt/apt.conf.d/10periodic
     echo 'APT::Periodic::Update-Package-Lists "0";' >> /etc/apt/apt.conf.d/10periodic
     echo 'APT::Periodic::Unattended-Upgrade "0";' >> /etc/apt/apt.conf.d/10periodic
@@ -76,7 +77,7 @@ prepare_apt() {
     echo 'DPkg::Lock::Timeout "60";' > /etc/apt/apt.conf.d/99lock-timeout
     
     log_info "Ожидание освобождения блокировок DPKG/APT..."
-    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
         sleep 3
     done
 
@@ -249,8 +250,11 @@ EOF
     sed -i 's/ospfd=no/ospfd=yes/' /etc/frr/daemons
     systemctl restart frr
     
+    # КРИТИЧЕСКИЙ ФИКС OSPF: Динамический поллинг готовности FRR
     log_info "Ожидание инициализации демона OSPF (FRR)..."
-    while ! vtysh -c "show daemon" >/dev/null 2>&1; do sleep 1; done
+    while ! vtysh -c "show daemon" >/dev/null 2>&1; do
+        sleep 1
+    done
 
     vtysh -c "conf t" \
           -c "interface gre1" \
@@ -300,24 +304,31 @@ network:
 EOF
     apply_netplan
     prepare_apt
-    apt-get install -y -q bridge-utils
+    apt-get install -y -q bridge-utils networkd-dispatcher
 
-    log_info "Настройка нативной Systemd службы коммутатора..."
-    cat > /etc/systemd/system/hq-switch-vlans.service <<EOF
+    # КРИТИЧЕСКИЙ ФИКС HQ-SW: Надежная инициализация PVID и vlan_filtering
+    mkdir -p /etc/networkd-dispatcher/routable.d
+    cat > /etc/networkd-dispatcher/routable.d/50-switch-vlans <<EOF
+#!/bin/bash
+if [ "\$IFACE" = "br0" ]; then
+    /sbin/bridge vlan add dev $INT_TRUNK vid 112 master
+    /sbin/bridge vlan add dev $INT_TRUNK vid 212 master
+    /sbin/bridge vlan add dev $INT_TRUNK vid 812 master
+    /sbin/bridge vlan add dev $INT_SRV vid 112 pvid untagged master
+    /sbin/bridge vlan add dev $INT_CLI vid 212 pvid untagged master
+fi
+EOF
+    chmod +x /etc/networkd-dispatcher/routable.d/50-switch-vlans
+
+    cat > /etc/systemd/system/bridge-vlan-filter.service <<EOF
 [Unit]
-Description=Configure HQ-SW VLANs
+Description=Enable VLAN filtering on br0
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStartPre=/bin/sh -c 'while ! ip link show br0 >/dev/null 2>&1; do sleep 1; done'
 ExecStart=/bin/sh -c 'echo 1 > /sys/class/net/br0/bridge/vlan_filtering'
-ExecStartPost=/sbin/bridge vlan add dev $INT_TRUNK vid 112 master
-ExecStartPost=/sbin/bridge vlan add dev $INT_TRUNK vid 212 master
-ExecStartPost=/sbin/bridge vlan add dev $INT_TRUNK vid 812 master
-ExecStartPost=/sbin/bridge vlan add dev $INT_SRV vid 112 pvid untagged master
-ExecStartPost=/sbin/bridge vlan add dev $INT_CLI vid 212 pvid untagged master
 RemainAfterExit=yes
 
 [Install]
@@ -325,8 +336,16 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now hq-switch-vlans.service
-    log_succ "HQ-SW: Виртуальный L2-коммутатор (VLAN 112/212/812) запущен!"
+    systemctl enable --now bridge-vlan-filter.service
+
+    # Принудительная инициализация портов
+    /sbin/bridge vlan add dev $INT_TRUNK vid 112 master 2>/dev/null || true
+    /sbin/bridge vlan add dev $INT_TRUNK vid 212 master 2>/dev/null || true
+    /sbin/bridge vlan add dev $INT_TRUNK vid 812 master 2>/dev/null || true
+    /sbin/bridge vlan add dev $INT_SRV vid 112 pvid untagged master 2>/dev/null || true
+    /sbin/bridge vlan add dev $INT_CLI vid 212 pvid untagged master 2>/dev/null || true
+
+    log_succ "HQ-SW: Виртуальный L2-коммутатор (VLAN 112/212/812) запущен надежно!"
 }
 
 setup_brrtr() {
@@ -360,7 +379,7 @@ EOF
     apply_netplan
     prepare_apt
 
-    apt-get install -y -q iptables-persistent frr
+    apt-get install -y -q iptables-persistent frr chrony
 
     id -u net_admin &>/dev/null || useradd -m -s /bin/bash net_admin
     echo 'net_admin:P@$$word' | chpasswd
@@ -393,7 +412,9 @@ EOF
     systemctl restart frr
     
     log_info "Ожидание инициализации демона OSPF (FRR)..."
-    while ! vtysh -c "show daemon" >/dev/null 2>&1; do sleep 1; done
+    while ! vtysh -c "show daemon" >/dev/null 2>&1; do
+        sleep 1
+    done
 
     vtysh -c "conf t" \
           -c "interface gre1" \
@@ -410,6 +431,12 @@ EOF
           -c "end" \
           -c "write"
 
+    cat > /etc/chrony/chrony.conf <<EOF
+server $ISP_BR_IP iburst
+makestep 1 3
+EOF
+    systemctl restart chrony
+
     force_dns "$HQ_SRV_IP"
     log_succ "BR-RTR: Сеть, NAT, OSPF и DNAT (8082, 2026) настроены!"
 }
@@ -417,7 +444,7 @@ EOF
 clear
 echo -e "${YELLOW}======================================================${NC}"
 echo -e "${GREEN} ДЕМОЭКЗАМЕН 2026 (В2) — МОДУЛЬ 1 (СЕТЕВОЙ ФУНДАМЕНТ)${NC}"
-echo -e "${CYAN} ROAS Topology, HQ-SW Systemd, Precise Routing${NC}"
+echo -e "${CYAN} ROAS Topology, HQ-SW Systemd, OSPF Polling Fix${NC}"
 echo -e "${YELLOW}======================================================${NC}"
 echo ""
 echo "Выберите роль машины:"
