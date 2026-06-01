@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # ДЕМОЭКЗАМЕН 2026 (ВАРИАНТ 2) — МОДУЛЬ 2 (ПРИКЛАДНЫЕ СЕРВИСЫ)
-# Особенности: AD Delegation, RAID5 Polling, Docker Mock (testdb2), Web Mock
+# Особенности: AD NS Delegation, Asymmetric DNS Fix, PAM Force
 # ==============================================================================
 
 trap cleanup SIGINT SIGTERM
@@ -9,7 +9,7 @@ trap cleanup SIGINT SIGTERM
 cleanup() {
     echo -e "\n\033[0;31m[ВНИМАНИЕ] Получен сигнал прерывания (SIGINT/SIGTERM).\033[0m"
     chattr -i /etc/resolv.conf 2>/dev/null || true
-    echo -e "\033[0;31m[ФАТАЛЬНО] Остановка выполнения. DPKG блокировки защищены.\033[0m"
+    echo -e "\033[0;31m[ФАТАЛЬНО] Остановка выполнения. DPKG блокировки НЕ снимаются принудительно для защиты базы пакетов.\033[0m"
     kill -TERM -$$ 2>/dev/null
     exit 1
 }
@@ -71,8 +71,7 @@ prepare_apt() {
     echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
     echo 'DPkg::Lock::Timeout "60";' > /etc/apt/apt.conf.d/99lock-timeout
     
-    log_info "Ожидание освобождения блокировок DPKG/APT..."
-    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+    while fuser /var/lib/dpkg/lock >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || fuser /var/cache/apt/archives/lock >/dev/null 2>&1; do
         sleep 3
     done
 
@@ -121,7 +120,7 @@ setup_hqsrv() {
     get_valid_interface "Интерфейс к HQ-SW (Access VLAN 112): " INT_LAN
     apply_netplan_srv "$HQ_SRV_IP/27" "$HQ_RTR_V112" "$INT_LAN"
 
-    log_info "Установка пакетов: mdadm, nfs, LAMP..."
+    log_info "Установка пакетов: mdadm, nfs, LAMP, BIND9..."
     prepare_apt
     apt-get install -y -q mdadm nfs-kernel-server apache2 mariadb-server php php-mysql bind9 bind9-utils chrony openssh-server
 
@@ -137,7 +136,6 @@ setup_hqsrv() {
     echo "AllowUsers sshuser" >> /etc/ssh/sshd_config
     systemctl restart ssh
 
-    # Строго по ТЗ: RAID5
     log_info "Сборка RAID5 из 3 дисков..."
     AVAILABLE_DISKS=""
     for disk in $(lsblk -d -n -o NAME | grep -E '^sd|^vd|^nvme'); do
@@ -186,7 +184,6 @@ setup_hqsrv() {
     exportfs -arv
     systemctl restart nfs-kernel-server
 
-    # Строго по ТЗ: Задание 7 (Apache, Port 8082, DB: webdb, User: web2c)
     log_info "Настройка базы данных MariaDB (webdb)..."
     systemctl start mariadb
     mysql -u root <<'SQLEOF'
@@ -213,8 +210,7 @@ EOF
     rm -f /var/www/html/index.html
     systemctl restart apache2
 
-    # КРИТИЧЕСКИЙ ФИКС: Делегирование NS-записей AD вместо forward-зон
-    log_info "Настройка DNS BIND9 (AD Delegation)..."
+    # КРИТИЧЕСКИЙ ФИКС: Убраны forward-зоны для AD, используется NS-делегирование
     cat > /etc/bind/named.conf.options <<EOF
 options {
     directory "/var/cache/bind";
@@ -231,6 +227,7 @@ zone "10.168.192.in-addr.arpa" { type master; file "/etc/bind/db.rev10"; };
 zone "20.168.192.in-addr.arpa" { type master; file "/etc/bind/db.rev20"; };
 EOF
 
+    # КРИТИЧЕСКИЙ ФИКС: Симметричный внешний IP ($ISP_HQ_IP) и NS-записи для Samba
     cat > /etc/bind/db.forward <<EOF
 \$TTL 604800
 @       IN  SOA   hq-srv.$DOMAIN. admin.$DOMAIN. ( 4 604800 86400 2419200 604800 )
@@ -244,7 +241,7 @@ br-srv  IN  A     $BR_SRV_IP
 docker  IN  A     $ISP_HQ_IP
 web     IN  A     $ISP_HQ_IP
 
-; Делегирование Active Directory на Samba DC
+; Делегирование поддоменов Active Directory на Samba AD DC (BR-SRV)
 _msdcs          IN NS br-srv.$DOMAIN.
 _sites          IN NS br-srv.$DOMAIN.
 _tcp            IN NS br-srv.$DOMAIN.
@@ -281,7 +278,7 @@ EOF
     echo -e "nameserver 127.0.0.1\nsearch $DOMAIN" > /etc/resolv.conf
     chattr +i /etc/resolv.conf 2>/dev/null || true
 
-    log_succ "HQ-SRV: RAID5, NFS, Web App (port 8082), DNS AD Delegation и SSH (2012) готовы!"
+    log_succ "HQ-SRV: RAID5, NFS, Web App (8082), AD DNS Delegation и SSH (2012) готовы!"
 }
 
 setup_brsrv() {
@@ -352,7 +349,6 @@ EOF
         samba-tool group addmembers hq "hquser${i}" 2>/dev/null || true
     done
 
-    # Строго по ТЗ: Задание 6 (Docker, testdb2, Port 8082, имена site и db)
     log_info "Создание Docker-композиции (Mock Application)..."
     mkdir -p /opt/docker_app
     cat > /opt/docker_app/docker-compose.yml <<EOF
@@ -380,8 +376,7 @@ EOF
     cd /opt/docker_app
     docker compose up -d
 
-    # Строго по ТЗ: Задание 5 (Ansible, /etc/ansible/hosts, ping)
-    log_info "Настройка подсистемы Ansible..."
+    log_info "Настройка Ansible..."
     mkdir -p /etc/ansible
     cat > /etc/ansible/hosts <<EOF
 [all:vars]
@@ -468,7 +463,7 @@ EOF
         systemctl restart sssd
     fi
 
-    # КРИТИЧЕСКИЙ ФИКС: Жесткая запись PAM для mkhomedir
+    # КРИТИЧЕСКИЙ ФИКС: Форсированное включение mkhomedir без интерактивного окна
     pam-auth-update --enable mkhomedir --force
 
     cat > /etc/sudoers.d/hq_domain <<EOF
@@ -515,11 +510,14 @@ EOF
 clear
 echo -e "${YELLOW}======================================================${NC}"
 echo -e "${GREEN} ДЕМОЭКЗАМЕН 2026 (В2) — МОДУЛЬ 2 (ПРИКЛАДНЫЕ СЕРВИСЫ)${NC}"
-echo -e "${CYAN} RAID5, Samba AD DC, Docker Mock, Ansible, Basic Auth${NC}"
+echo -e "${CYAN} RAID5, Samba AD DNS Fix, APT Locks, Asymmetric IPs Fixed${NC}"
 echo -e "${YELLOW}======================================================${NC}"
 echo ""
 echo "Выберите роль машины:"
 echo "  1) ISP     — Провайдер (Nginx Reverse Proxy + Basic Auth)"
+echo "  2) HQ-RTR  — Роутер Центра (Пропуск)"
+echo "  3) HQ-SW   — Коммутатор Центра (Пропуск)"
+echo "  4) BR-RTR  — Роутер Филиала (Пропуск)"
 echo "  5) HQ-SRV  — Сервер Центра (RAID5, NFS, Apache/MariaDB)"
 echo "  6) BR-SRV  — Сервер Филиала (Samba AD, Docker, Ansible)"
 echo "  7) HQ-CLI  — Клиент (AutoFS, Join AD, Yandex)"
@@ -530,6 +528,7 @@ while true; do
     read -p "Ваш выбор: " choice
     case $choice in
         1) setup_isp; break ;;
+        2|3|4) log_info "Сервисный модуль не требуется."; break ;;
         5) setup_hqsrv; break ;;
         6) setup_brsrv; break ;;
         7) setup_hqcli; break ;;
