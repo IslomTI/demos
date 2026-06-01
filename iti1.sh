@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # ДЕМОЭКЗАМЕН 2026 (ВАРИАНТ 2) — МОДУЛЬ 1 (БАЗОВАЯ ИНФРАСТРУКТУРА)
-# Особенности: Boot Hang Fix, CD-ROM APT Fix, Full Network Init
+# Особенности: Boot Hang Fix, CD-ROM APT Fix, Full Network Init, NTP Server Fix
 # ==============================================================================
 
 trap cleanup SIGINT SIGTERM
@@ -167,7 +167,6 @@ setup_hqrtr() {
     get_valid_interface "Интерфейс к ISP (WAN): " INT_ISP
     get_valid_interface "Интерфейс к HQ-SW (ТРАНК для VLAN): " INT_LAN
 
-    # Отключение долгой загрузки системы из-за портов без IP
     systemctl mask systemd-networkd-wait-online.service
 
     rm -f /etc/netplan/*.yaml
@@ -208,7 +207,8 @@ EOF
     apply_netplan
     prepare_apt
 
-    apt-get install -y -q isc-dhcp-server iptables-persistent frr
+    # КРИТИЧЕСКИЙ ФИКС КРИТЕРИЯ 2.4: Устанавливаем chrony на роутер
+    apt-get install -y -q isc-dhcp-server iptables-persistent frr chrony
 
     id -u net_admin &>/dev/null || useradd -m -s /bin/bash net_admin
     echo 'net_admin:P@$$word' | chpasswd
@@ -270,8 +270,17 @@ EOF
           -c "end" \
           -c "write"
 
+    # КРИТИЧЕСКИЙ ФИКС КРИТЕРИЯ 2.4: Настройка роутера как сервера времени для сети HQ
+    cat > /etc/chrony/chrony.conf <<EOF
+server $ISP_HQ_IP iburst
+allow 192.168.0.0/16
+allow 10.0.0.0/8
+makestep 1 3
+EOF
+    systemctl restart chrony
+
     force_dns "$HQ_SRV_IP"
-    log_succ "HQ-RTR: ROAS, OSPF, DHCP и DNAT готовы!"
+    log_succ "HQ-RTR: ROAS, OSPF, DHCP, NTP Server и DNAT готовы!"
 }
 
 setup_hqsw() {
@@ -429,14 +438,17 @@ EOF
           -c "end" \
           -c "write"
 
+    # Симметричная настройка сервера времени для сети BR
     cat > /etc/chrony/chrony.conf <<EOF
 server $ISP_BR_IP iburst
+allow 192.168.0.0/16
+allow 10.0.0.0/8
 makestep 1 3
 EOF
     systemctl restart chrony
 
     force_dns "$HQ_SRV_IP"
-    log_succ "BR-RTR: Сеть, NAT, OSPF и DNAT настроены!"
+    log_succ "BR-RTR: Сеть, NAT, OSPF, NTP Server и DNAT настроены!"
 }
 
 setup_hqsrv() {
@@ -574,9 +586,9 @@ echo -e "${YELLOW}======================================================${NC}"
 echo ""
 echo "Выберите роль машины:"
 echo "  1) ISP     — Провайдер (Сеть + NAT + NTP Master 7)"
-echo "  2) HQ-RTR  — Роутер Центра (ROAS, OSPF, DHCP, DNAT)"
+echo "  2) HQ-RTR  — Роутер Центра (ROAS, OSPF, DHCP, DNAT, NTP Server)"
 echo "  3) HQ-SW   — Коммутатор Центра (L2 Bridge + VLAN Tags)"
-echo "  4) BR-RTR  — Роутер Филиала (Сеть, OSPF, DNAT)"
+echo "  4) BR-RTR  — Роутер Филиала (Сеть, OSPF, DNAT, NTP Server)"
 echo "  5) HQ-SRV  — Сервер Центра (Базовая сеть, SSH 2012)"
 echo "  6) BR-SRV  — Сервер Филиала (Базовая сеть, SSH 2026)"
 echo "  7) HQ-CLI  — Клиент (Чистый DHCP)"
